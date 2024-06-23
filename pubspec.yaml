@@ -1,0 +1,19 @@
+name: frame_flutter_translate_host
+description: "Connects to Frame and streams audio from its microphone, which is sent through a local (on Host device) vosk speech-to-text engine, translates the text into a target language on-device, and displays the translated text on the Frame display."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.4.3 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
