@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:buffered_list_stream/buffered_list_stream.dart';
+import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 import 'package:record/record.dart';
 import 'package:vosk_flutter/vosk_flutter.dart';
 
@@ -28,7 +30,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  static const _textStyle = TextStyle(fontSize: 30, color: Colors.black);
   static const _modelName = 'vosk-model-small-en-us-0.15.zip';
   static const _sampleRate = 16000;
 
@@ -38,13 +39,16 @@ class _HomePageState extends State<HomePage> {
 
   Model? _model;
   Recognizer? _recognizer;
-  String _partialResult = "N/A";
-  String _finalResult = "N/A";
+  String _text = "N/A";
+  String _translatedText = "N/A";
+
+  final _translator = OnDeviceTranslator(
+    sourceLanguage: TranslateLanguage.english,
+    targetLanguage: TranslateLanguage.spanish);
 
   @override
   void initState() {
     super.initState();
-
     _initVosk();
     _initAudio();
   }
@@ -53,6 +57,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() async {
     await _recorder.cancel();
     _recorder.dispose();
+    _translator.close();
     super.dispose();
   }
 
@@ -86,13 +91,19 @@ class _HomePageState extends State<HomePage> {
         if (_recognizer != null) {
           final resultReady = await _recognizer!.acceptWaveformBytes(Uint8List.fromList(audioSample));
 
-          if (resultReady) {
-            var result = await _recognizer!.getResult();
-            setState(() => _finalResult = result);
-          }
-          else {
-            var result = await _recognizer!.getPartialResult();
-            setState(() => _partialResult = result);
+          // parse the Result or Partial Result out of the JSON
+          var text = resultReady ?
+            jsonDecode(await _recognizer!.getResult())['text'] :
+            jsonDecode(await _recognizer!.getPartialResult())['partial'];
+
+          // leave the last utterance there until some more text comes in rather than blanking it
+          if (text.toString().isNotEmpty) {
+            var translatedText = await _translator.translateText(text);
+
+            setState(() {
+              _text = text;
+              _translatedText = translatedText;
+            });
           }
         }
       }
@@ -103,7 +114,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     if (_model == null) {
       return const Scaffold(
-          body: Center(child: Text("Loading model...", style: _textStyle)));
+          body: Center(child: Text("Loading model...")));
     }
     else {
       return Scaffold(
@@ -111,8 +122,11 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text('Partial result: $_partialResult', style: _textStyle),
-              Text('Final result: $_finalResult', style: _textStyle),
+              Text(_text,
+                style: const TextStyle(fontSize: 30)),
+              const Divider(),
+              Text(_translatedText,
+                style: const TextStyle(fontSize: 30, fontStyle: FontStyle.italic)),
             ],
           ),
         ),
