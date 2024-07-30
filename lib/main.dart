@@ -30,8 +30,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  static const _modelName = 'vosk-model-small-cn-0.22.zip';
-  static const _sampleRate = 16000;
+  static const _modelName = 'vosk-model-small-pt-0.3.zip';
+  static const _sampleRate = 8000;
 
   final _vosk = VoskFlutterPlugin.instance();
   final _recorder = AudioRecorder();
@@ -43,7 +43,7 @@ class _HomePageState extends State<HomePage> {
   String _translatedText = "N/A";
 
   final _translator = OnDeviceTranslator(
-    sourceLanguage: TranslateLanguage.chinese,
+    sourceLanguage: TranslateLanguage.portuguese,
     targetLanguage: TranslateLanguage.english);
 
   @override

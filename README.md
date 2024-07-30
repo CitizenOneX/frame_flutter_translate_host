@@ -2,7 +2,7 @@
 
 Connects to Frame and streams audio from its microphone, which is sent through a local (on Host device) [Vosk speech-to-text engine (Flutter package is Android only)](https://pub.dev/packages/vosk_flutter), translates the text into a target language on-device using [ML Kit (Android, iOS only)](https://pub.dev/packages/google_mlkit_translation), and displays the translated text on the Frame display.
 
-Drop in an alternative [Vosk model](https://alphacephei.com/vosk/models) to perform speech-to-text in a language other than Chinese (`vosk-model-small-cn-0.22` included).
+Drop in an alternative [Vosk model](https://alphacephei.com/vosk/models) to perform speech-to-text in a language other than Portuguese (`vosk-model-small-pt-0.3` included).
 
 Specify an alternative `targetLanguage` in [lib/main.dart](lib/main.dart) to translate to an [ML Kit supported language](https://developers.google.com/ml-kit/language/translation/translation-language-support) other than English.
 
