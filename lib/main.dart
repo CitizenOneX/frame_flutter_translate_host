@@ -80,6 +80,7 @@ class MainAppState extends State<MainApp> {
             break;
           default:
             _log.fine('Unexpected state on scan timeout: $_currentState');
+            if (mounted) setState(() {});
         }
       })
       .listen((device) {
@@ -222,7 +223,7 @@ class MainAppState extends State<MainApp> {
   }
 
   /// translate application members
-  static const _modelName = 'vosk-model-small-pt-0.3.zip';
+  static const _modelName = 'vosk-model-small-cn-0.22.zip';
   static const _sampleRate = 8000;
 
   final _vosk = VoskFlutterPlugin.instance();
@@ -235,7 +236,7 @@ class MainAppState extends State<MainApp> {
   String _translatedText = "N/A";
 
   final _translator = OnDeviceTranslator(
-    sourceLanguage: TranslateLanguage.portuguese,
+    sourceLanguage: TranslateLanguage.chinese,
     targetLanguage: TranslateLanguage.english);
 
   @override
@@ -310,22 +311,23 @@ class MainAppState extends State<MainApp> {
             final resultReady = await _recognizer!.acceptWaveformBytes(Uint8List.fromList(audioSample));
 
             // parse the Result or Partial Result out of the JSON
-            var text = resultReady ?
+            String text = resultReady ?
               jsonDecode(await _recognizer!.getResult())['text'] :
               jsonDecode(await _recognizer!.getPartialResult())['partial'];
 
             // leave the last utterance there until some more text comes in rather than blanking it
-            if (text.toString().isNotEmpty) {
+            if (text.isNotEmpty) {
               var translatedText = await _translator.translateText(text);
 
-                try {
-                  DisplayHelper.writeText(_connectedDevice!, translatedText);
-                  // FIXME add a delay here too?
-                  DisplayHelper.show(_connectedDevice!);
-                }
-                catch (e) {
-                  _log.fine('Error sending text to Frame: $e');
-                }
+              try {
+                DisplayHelper.writeText(_connectedDevice!, translatedText);
+                // TODO need a delay here too?
+                Future.delayed(const Duration(milliseconds: 100));
+                DisplayHelper.show(_connectedDevice!);
+              }
+              catch (e) {
+                _log.fine('Error sending text to Frame: $e');
+              }
 
               setState(() {
                 _text = text;
