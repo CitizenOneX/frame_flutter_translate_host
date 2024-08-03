@@ -296,7 +296,7 @@ class DisplayHelper {
       // send the row of text to the frame
       await frame.sendString('frame.display.text("${escapeLuaString(line)}",$thisLineX,${y + verticalOffset}, {spacing=$charSpacing})', awaitResponse: false);
       // TODO it should really be possible to send lots of display calls without introducing delays
-      Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(const Duration(milliseconds: 100));
 
       y += _lineHeight;
       if ((maxHeight != null && y > maxHeight) || y + verticalOffset > 640) {
