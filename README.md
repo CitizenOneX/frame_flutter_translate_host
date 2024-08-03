@@ -9,9 +9,7 @@ Specify an alternative `targetLanguage` in [lib/main.dart](lib/main.dart) to tra
 ### Frameshots, Screenshots
 ![Frameshot1](docs/frameshot1.png)
 
-
-
-
+https://github.com/user-attachments/assets/e8fdd6c2-bc09-42fd-a3aa-81a202fae1b4
 
 ![Screenshot1](docs/screenshot1.png)
 
