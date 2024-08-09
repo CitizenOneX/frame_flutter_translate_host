@@ -9,22 +9,10 @@ import 'package:logging/logging.dart';
 import 'package:record/record.dart';
 import 'package:vosk_flutter/vosk_flutter.dart';
 
-import 'bluetooth.dart';
-import 'display_helper.dart';
+import 'frame_helper.dart';
+import 'simple_frame_app.dart';
 
 void main() => runApp(const MainApp());
-
-/// basic State Machine for the app; mostly for bluetooth lifecycle,
-/// all app activity expected to take place during "running" state
-enum ApplicationState {
-  disconnected,
-  scanning,
-  connecting,
-  ready,
-  running,
-  stopping,
-  disconnecting,
-}
 
 final _log = Logger("MainApp");
 
@@ -35,203 +23,23 @@ class MainApp extends StatefulWidget {
   MainAppState createState() => MainAppState();
 }
 
-class MainAppState extends State<MainApp> {
-  late ApplicationState _currentState;
-
-  // Use BrilliantBluetooth for communications with Frame
-  BrilliantDevice? _connectedDevice;
-  StreamSubscription? _scanStream;
-  StreamSubscription<BrilliantDevice>? _deviceStateSubs;
+/// SimpleFrameAppState mixin helps to manage the lifecycle of the Frame connection outside of this file
+class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   MainAppState() {
-    Logger.root.level = Level.ALL;
+    Logger.root.level = Level.FINE;
     Logger.root.onRecord.listen((record) {
-      debugPrint('${record.level.name}: ${record.time}: ${record.message}');
+      debugPrint('${record.level.name}: [${record.loggerName}] ${record.time}: ${record.message}');
     });
-    _currentState = ApplicationState.disconnected;
-  }
-
-  Future<void> _scanForFrame() async {
-    _currentState = ApplicationState.scanning;
-    if (mounted) setState(() {});
-
-    await BrilliantBluetooth.requestPermission();
-
-    await _scanStream?.cancel();
-    _scanStream = BrilliantBluetooth.scan()
-      .timeout(const Duration(seconds: 5), onTimeout: (sink) {
-        // Scan timeouts can occur without having found a Frame, but also
-        // after the Frame is found and being connected to, even though
-        // the first step after finding the Frame is to stop the scan.
-        // In those cases we don't want to change the application state back
-        // to disconnected
-        switch (_currentState) {
-          case ApplicationState.scanning:
-            _log.fine('Scan timed out after 5 seconds');
-            _currentState = ApplicationState.disconnected;
-            if (mounted) setState(() {});
-            break;
-          case ApplicationState.connecting:
-            // found a device and started connecting, just let it play out
-            break;
-          case ApplicationState.ready:
-          case ApplicationState.running:
-            // already connected, nothing to do
-            break;
-          default:
-            _log.fine('Unexpected state on scan timeout: $_currentState');
-            if (mounted) setState(() {});
-        }
-      })
-      .listen((device) {
-        _log.fine('Frame found, connecting');
-        _currentState = ApplicationState.connecting;
-        if (mounted) setState(() {});
-
-        _connectToScannedFrame(device);
-      });
-  }
-
-  Future<void> _connectToScannedFrame(BrilliantScannedDevice device) async {
-    try {
-      _log.fine('connecting to scanned device: $device');
-      _connectedDevice = await BrilliantBluetooth.connect(device);
-      _log.fine('device connected: ${_connectedDevice!.device.remoteId}');
-
-      // subscribe to connection state for the device to detect disconnections
-      // so we can transition the app to a disconnected state
-      await _deviceStateSubs?.cancel();
-      _deviceStateSubs = _connectedDevice!.connectionState.listen((bd) {
-        _log.fine('Frame connection state change: ${bd.state.name}');
-        if (bd.state == BrilliantConnectionState.disconnected) {
-          _currentState = ApplicationState.disconnected;
-          _log.fine('Frame disconnected: currentState: $_currentState');
-          if (mounted) setState(() {});
-        }
-      });
-
-      try {
-        // terminate the main.lua (if currently running) so we can run our lua code
-        // TODO looks like if the signal comes too early after connection, it isn't registered
-        await Future.delayed(const Duration(milliseconds: 500));
-        await _connectedDevice!.sendBreakSignal();
-
-        // Application is ready to go!
-        _currentState = ApplicationState.ready;
-        if (mounted) setState(() {});
-
-      } catch (e) {
-        _currentState = ApplicationState.disconnected;
-        _log.fine('Error while sending break signal: $e');
-        if (mounted) setState(() {});
-
-        _disconnectFrame();
-      }
-    } catch (e) {
-      _currentState = ApplicationState.disconnected;
-      _log.fine('Error while connecting and/or discovering services: $e');
-    }
-  }
-
-  Future<void> _reconnectFrame() async {
-    if (_connectedDevice != null) {
-      try {
-        _log.fine('connecting to existing device: $_connectedDevice');
-        await BrilliantBluetooth.reconnect(_connectedDevice!.uuid);
-        _log.fine('device connected: $_connectedDevice');
-
-        // subscribe to connection state for the device to detect disconnections
-        // and transition the app to a disconnected state
-        await _deviceStateSubs?.cancel();
-        _deviceStateSubs = _connectedDevice!.connectionState.listen((bd) {
-          _log.fine('Frame connection state change: ${bd.state.name}');
-          if (bd.state == BrilliantConnectionState.disconnected) {
-            _currentState = ApplicationState.disconnected;
-            _log.fine('Frame disconnected');
-            if (mounted) setState(() {});
-          }
-        });
-
-        try {
-          // terminate the main.lua (if currently running) so we can run our lua code
-          // TODO looks like if the signal comes too early after connection, it isn't registered
-          await Future.delayed(const Duration(milliseconds: 500));
-          await _connectedDevice!.sendBreakSignal();
-
-          // Application is ready to go!
-          _currentState = ApplicationState.ready;
-          if (mounted) setState(() {});
-
-        } catch (e) {
-          _currentState = ApplicationState.disconnected;
-          _log.fine('Error while sending break signal: $e');
-          if (mounted) setState(() {});
-
-        _disconnectFrame();
-        }
-      } catch (e) {
-        _currentState = ApplicationState.disconnected;
-        _log.fine('Error while connecting and/or discovering services: $e');
-        if (mounted) setState(() {});
-      }
-    }
-    else {
-      _currentState = ApplicationState.disconnected;
-      _log.fine('Current device is null, reconnection not possible');
-      if (mounted) setState(() {});
-    }
-  }
-
-  Future<void> _disconnectFrame() async {
-    _currentState = ApplicationState.disconnecting;
-    if (mounted) setState(() {});
-
-    if (_connectedDevice != null) {
-      try {
-        _log.fine('Disconnecting from Frame');
-        // break first in case it's sleeping - otherwise the reset won't work
-        await _connectedDevice!.sendBreakSignal();
-        _log.fine('Break signal sent');
-        // TODO the break signal needs some more time to be processed before we can reliably send the reset signal, by the looks of it
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        // try to reset device back to running main.lua
-        await _connectedDevice!.sendResetSignal();
-        _log.fine('Reset signal sent');
-        // TODO the reset signal doesn't seem to be processed in time if we disconnect immediately, so we introduce a delay here to give it more time
-        // The sdk's sendResetSignal actually already adds 100ms delay
-        // perhaps it's not quite enough.
-        await Future.delayed(const Duration(milliseconds: 500));
-
-      } catch (e) {
-          _log.fine('Error while sending reset signal: $e');
-      }
-
-      try{
-          // try to disconnect cleanly if the device allows
-          await _connectedDevice!.disconnect();
-      } catch (e) {
-          _log.fine('Error while calling disconnect(): $e');
-      }
-    }
-    else {
-      _log.fine('Current device is null, disconnection not possible');
-    }
-
-    _currentState = ApplicationState.disconnected;
-    if (mounted) setState(() {});
   }
 
   /// translate application members
   static const _modelName = 'vosk-model-small-cn-0.22.zip';
-  static const _sampleRate = 8000;
-
   final _vosk = VoskFlutterPlugin.instance();
-  final _recorder = AudioRecorder();
-  Stream<List<int>>? _audioSampleBufferedStream;
+  late final Model _model;
+  late final Recognizer _recognizer;
+  static const _sampleRate = 16000;
 
-  Model? _model;
-  Recognizer? _recognizer;
   String _text = "N/A";
   String _translatedText = "N/A";
 
@@ -242,37 +50,51 @@ class MainAppState extends State<MainApp> {
   @override
   void initState() {
     super.initState();
+    currentState = ApplicationState.initializing;
+    // asynchronously kick off Vosk initialization
     _initVosk();
   }
 
   @override
   void dispose() async {
-    await _recorder.cancel();
-    _recorder.dispose();
-    _model?.dispose();
-    _recognizer?.dispose();
+    _model.dispose();
+    _recognizer.dispose();
     _translator.close();
     super.dispose();
   }
 
   void _initVosk() async {
-    final enSmallModelPath = await ModelLoader().loadFromAssets('assets/$_modelName');
-    final model = await _vosk.createModel(enSmallModelPath);
-    _recognizer = await _vosk.createRecognizer(model: model, sampleRate: _sampleRate);
-    setState(() => _model = model);
+    final modelPath = await ModelLoader().loadFromAssets('assets/$_modelName');
+    _model = await _vosk.createModel(modelPath);
+    _recognizer = await _vosk.createRecognizer(model: _model, sampleRate: _sampleRate);
+
+    currentState = ApplicationState.disconnected;
+    if (mounted) setState(() {});
   }
 
-  Future<bool> _startAudio() async {
+  /// Sets up the Audio used for the application.
+  /// Returns true if the audio is set up correctly, in which case
+  /// it also returns a reference to the AudioRecorder and the
+  /// audioSampleBufferedStream
+  Future<(bool, AudioRecorder?, Stream<List<int>>?)> startAudio() async {
+    // create a fresh AudioRecorder each time we run - it will be dispose()d when we click stop
+    AudioRecorder audioRecorder = AudioRecorder();
+
     // Check and request permission if needed
-    if (await _recorder.hasPermission()) {
+    if (!await audioRecorder.hasPermission()) {
+      return (false, null, null);
+    }
+
+    try {
       // start the audio stream
-      final recordStream = await _recorder.startStream(
+      // TODO select suitable sample rate for the Frame given BLE bandwidth constraints if we want to switch to Frame mic
+      final recordStream = await audioRecorder.startStream(
         const RecordConfig(encoder: AudioEncoder.pcm16bits,
           numChannels: 1,
           sampleRate: _sampleRate));
 
-      // buffer the audio stream into chunks of 2048 samples
-      _audioSampleBufferedStream = bufferedListStream(
+      // buffer the audio stream into chunks of 4096 samples
+      final audioSampleBufferedStream = bufferedListStream(
         recordStream.map((event) {
           return event.toList();
         }),
@@ -280,75 +102,174 @@ class MainAppState extends State<MainApp> {
         4096 * 2,
       );
 
-      return true;
+      return (true, audioRecorder, audioSampleBufferedStream);
+    } catch (e) {
+      _log.severe('Error starting Audio: $e');
+      return (false, null, null);
     }
-    return false;
   }
 
-  void _stopAudio() async {
-    await _recorder.cancel();
+  Future<void> stopAudio(AudioRecorder recorder) async {
+    // stop the audio
+    await recorder.stop();
+    await recorder.dispose();
   }
 
-  /// This application uses vosk speech-to-text to listen to audio from the host mic, convert to text,
-  /// and send the text to the Frame in real-time
-  Future<void> _runApplication() async {
-    _currentState = ApplicationState.running;
+  /// This application uses vosk speech-to-text to listen to audio from the host mic in a selected
+  /// source language, convert to text, translate the text to the target language,
+  /// and send the text to the Frame in real-time. It has a running main loop in this function
+  /// and also on the Frame (frame_app.lua)
+  @override
+  Future<void> runApplication() async {
+    currentState = ApplicationState.running;
+    _text = '';
+    _translatedText = '';
     if (mounted) setState(() {});
 
     try {
-      if (await _startAudio()) {
+      var (ok, audioRecorder, audioSampleBufferedStream) = await startAudio();
+      if (!ok) {
+        currentState = ApplicationState.ready;
+        if (mounted) setState(() {});
+        return;
+      }
 
-        // loop over the incoming audio data and send reults to Frame
-        await for (var audioSample in _audioSampleBufferedStream!) {
-          if (_recognizer != null) {
-            // if the user has clicked Stop we want to stop processing
-            // and clear the display
-            if (_currentState != ApplicationState.running) {
-              DisplayHelper.clear(_connectedDevice!);
-              break;
-            }
+      // try to get the Frame into a known state by making sure there's no main loop running
+      frame!.sendBreakSignal();
+      await Future.delayed(const Duration(milliseconds: 500));
 
-            final resultReady = await _recognizer!.acceptWaveformBytes(Uint8List.fromList(audioSample));
+      // clean up by deregistering any handler and deleting any prior script
+      await frame!.sendString('frame.bluetooth.receive_callback(nil);print(0)', awaitResponse: true);
+      await Future.delayed(const Duration(milliseconds: 500));
+      await frame!.sendString('frame.file.remove("frame_app.lua");print(0)', awaitResponse: true);
+      await Future.delayed(const Duration(milliseconds: 500));
 
-            // parse the Result or Partial Result out of the JSON
-            String text = resultReady ?
-              jsonDecode(await _recognizer!.getResult())['text'] :
-              jsonDecode(await _recognizer!.getPartialResult())['partial'];
+      // send our frame_app to the Frame
+      // it listens to data being sent and renders the text on the display
+      await frame!.uploadScript('frame_app.lua', 'assets/frame_app.lua');
+      await Future.delayed(const Duration(milliseconds: 500));
 
-            // leave the last utterance there until some more text comes in rather than blanking it
-            if (text.isNotEmpty) {
-              var translatedText = await _translator.translateText(text);
+      // kick off the main application loop
+      await frame!.sendString('require("frame_app")', awaitResponse: true);
+      await Future.delayed(const Duration(milliseconds: 500));
 
-              try {
-                DisplayHelper.writeText(_connectedDevice!, translatedText);
-                // TODO need a delay here too?
-                await Future.delayed(const Duration(milliseconds: 100));
-                DisplayHelper.show(_connectedDevice!);
-              }
-              catch (e) {
-                _log.fine('Error sending text to Frame: $e');
-              }
+      // -----------------------------------------------------------------------
+      // frame_app is installed on Frame and running, start our application loop
+      // -----------------------------------------------------------------------
 
-              setState(() {
-                _text = text;
-                _translatedText = translatedText;
-              });
-            }
-          }
+      String prevText = '';
+
+      // loop over the incoming audio data and send reults to Frame
+      await for (var audioSample in audioSampleBufferedStream!) {
+        // if the user has clicked Stop we want to jump out of the main loop and stop processing
+        if (currentState != ApplicationState.running) {
+          break;
         }
 
-        _stopAudio();
+        // recognizer blocks until it has something
+        final resultReady = await _recognizer.acceptWaveformBytes(Uint8List.fromList(audioSample));
+
+        // TODO consider enabling "alternatives"?
+        _text = resultReady ?
+            jsonDecode(await _recognizer.getResult())['text']
+          : jsonDecode(await _recognizer.getPartialResult())['partial'];
+
+        // If the text is the same as the previous one, we don't send it to Frame and force a redraw
+        // The recognizer often produces a bunch of empty string in a row too, so this means
+        // we send the first one (clears the display) but not subsequent ones
+        // Often the final result matches the last partial, so if it's a final result then show it
+        // on the phone but don't send it
+        if (_text == prevText) {
+          continue;
+        }
+        else if (_text.isEmpty) {
+          // turn the empty string into a single space and send
+          // still can't put it through the wrapped-text-chunked-sender
+          // because it will be zero bytes payload so no message will
+          // be sent.
+          // Users might say this first empty partial
+          // comes a bit soon and hence the display is cleared a little sooner
+          // than they want (not like audio hangs around in the air though
+          // after words are spoken!)
+          frame!.sendData([0x0b, 0x20]);
+          prevText = '';
+          continue;
+        }
+        else {
+          _translatedText = await _translator.translateText(_text);
+        }
+
+        if (_log.isLoggable(Level.FINE)) {
+          _log.fine('Recognized text: $_text');
+        }
+
+        // sentence fragments can be longer than MTU (200-ish bytes) so we introduce a header
+        // byte to indicate if this is a non-final chunk or a final chunk, which is interpreted
+        // on the other end in frame_app
+        try {
+          // send current text to Frame, splitting into "longText"-marked chunks if required
+          String wrappedText = FrameHelper.wrapText(_translatedText, 640, 4);
+
+          int sentBytes = 0;
+          int bytesRemaining = wrappedText.length;
+          int chunksize = frame!.maxDataLength! - 1;
+          List<int> bytes;
+
+          while (sentBytes < wrappedText.length) {
+            if (bytesRemaining <= chunksize) {
+              // final chunk
+              bytes = [0x0b] + wrappedText.substring(sentBytes, sentBytes + bytesRemaining).codeUnits;
+            }
+            else {
+              // non-final chunk
+              bytes = [0x0a] + wrappedText.substring(sentBytes, sentBytes + chunksize).codeUnits;
+            }
+
+            // send the chunk
+            frame!.sendData(bytes);
+
+            sentBytes += bytes.length;
+            bytesRemaining = wrappedText.length - sentBytes;
+          }
+        }
+        catch (e) {
+          _log.severe('Error sending text to Frame: $e');
+          break;
+        }
+
+        // update the phone UI too
+        if (mounted) setState(() {});
+        prevText = _text;
       }
+
+      // ----------------------------------------------------------------------
+      // finished the main application loop, shut it down here and on the Frame
+      // ----------------------------------------------------------------------
+
+      await stopAudio(audioRecorder!);
+
+      // send a break to stop the Lua app loop on Frame
+      await frame!.sendBreakSignal();
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // deregister the data handler
+      await frame!.sendString('frame.bluetooth.receive_callback(nil);print(0)', awaitResponse: true);
+      await Future.delayed(const Duration(milliseconds: 500));
+
     } catch (e) {
       _log.fine('Error executing application logic: $e');
     }
 
-    _currentState = ApplicationState.ready;
+    currentState = ApplicationState.ready;
     if (mounted) setState(() {});
   }
 
-  Future<void> _stopApplication() async {
-    _currentState = ApplicationState.stopping;
+  /// The runApplication function will keep running until we interrupt it here
+  /// and tell it to start shutting down. It will interrupt the frame_app
+  /// and perform the cleanup on Frame and here
+  @override
+  Future<void> interruptApplication() async {
+    currentState = ApplicationState.stopping;
     if (mounted) setState(() {});
   }
 
@@ -357,41 +278,43 @@ class MainAppState extends State<MainApp> {
     // work out the states of the footer buttons based on the app state
     List<Widget> pfb = [];
 
-    switch (_currentState) {
+    switch (currentState) {
       case ApplicationState.disconnected:
-        pfb.add(TextButton(onPressed: _connectedDevice != null ? _reconnectFrame : _scanForFrame, child: const Text('Connect Frame')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Start Translation')));
+        pfb.add(TextButton(onPressed: scanOrReconnectFrame, child: const Text('Connect Frame')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Start')));
         pfb.add(const TextButton(onPressed: null, child: Text('Finish')));
         break;
 
+      case ApplicationState.initializing:
       case ApplicationState.scanning:
       case ApplicationState.connecting:
       case ApplicationState.disconnecting:
       case ApplicationState.stopping:
         pfb.add(const TextButton(onPressed: null, child: Text('Connect Frame')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Start Translation')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Start')));
         pfb.add(const TextButton(onPressed: null, child: Text('Finish')));
         break;
 
       case ApplicationState.ready:
         pfb.add(const TextButton(onPressed: null, child: Text('Connect Frame')));
-        pfb.add(TextButton(onPressed: _runApplication, child: const Text('Start Translation')));
-        pfb.add(TextButton(onPressed: _disconnectFrame, child: const Text('Finish')));
+        pfb.add(TextButton(onPressed: runApplication, child: const Text('Start')));
+        pfb.add(TextButton(onPressed: disconnectFrame, child: const Text('Finish')));
         break;
 
       case ApplicationState.running:
         pfb.add(const TextButton(onPressed: null, child: Text('Connect Frame')));
-        pfb.add(TextButton(onPressed: _stopApplication, child: const Text('Stop Translation')));
+        pfb.add(TextButton(onPressed: interruptApplication, child: const Text('Stop')));
         pfb.add(const TextButton(onPressed: null, child: Text('Finish')));
         break;
     }
 
     return MaterialApp(
-      title: 'Translation (Host)',
+      title: 'Translation',
       theme: ThemeData.dark(),
       home: Scaffold(
         appBar: AppBar(
-          title: const Text("Frame Translation"),
+          title: const Text("Translation"),
+          actions: [getBatteryWidget()]
         ),
         body: Center(
           child: Container(

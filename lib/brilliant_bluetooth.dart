@@ -49,24 +49,25 @@ class BrilliantDevice {
   String get uuid => device.remoteId.str;
 
   Stream<BrilliantDevice> get connectionState {
-    return FlutterBluePlus.events.onConnectionStateChanged
+    // changed to only listen for connectionState data coming from the Frame device rather than all events from all devices as before
+    return device.connectionState
         .where((event) =>
-            event.connectionState == BluetoothConnectionState.connected ||
-            (event.connectionState == BluetoothConnectionState.disconnected &&
-                event.device.disconnectReason != null &&
-                event.device.disconnectReason!.code != 23789258))
+            event == BluetoothConnectionState.connected ||
+            (event == BluetoothConnectionState.disconnected &&
+                device.disconnectReason != null &&
+                device.disconnectReason!.code != 23789258))
         .asyncMap((event) async {
-      if (event.connectionState == BluetoothConnectionState.connected) {
+      if (event == BluetoothConnectionState.connected) {
         _log.info("Connection state stream: Connected");
         try {
-          return await BrilliantBluetooth._enableServices(event.device);
+          return await BrilliantBluetooth._enableServices(device);
         } catch (error) {
           _log.warning("Connection state stream: Invalid due to $error");
           return Future.error(BrilliantBluetoothException(error.toString()));
         }
       }
       _log.info(
-          "Connection state stream: Disconnected due to ${event.device.disconnectReason!.description}");
+          "Connection state stream: Disconnected due to ${device.disconnectReason!.description}");
       // Note: automatic reconnection isn't suitable for all cases, so it might
       // be better to leave this up to the sdk user to specify. iOS appears to
       // use FBP's native autoconnect, so if Android behaviour would change then
@@ -76,28 +77,31 @@ class BrilliantDevice {
       // }
       return BrilliantDevice(
         state: BrilliantConnectionState.disconnected,
-        device: event.device,
+        device: device,
       );
     });
   }
 
+  // logs each string message (messages without the 0x01 first byte) and provides a stream of the utf8-decoded strings
   Stream<String> get stringResponse {
-    return FlutterBluePlus.events.onCharacteristicReceived
-        .where((event) => event.value[0] != 0x01)
+    // changed to only listen for data coming through the Frame's rx characteristic, not all attached devices as before
+    return _rxChannel!.onValueReceived
+        .where((event) => event[0] != 0x01)
         .map((event) {
-      if (event.value[0] != 0x02) {
-        _log.info("Received string: ${utf8.decode(event.value)}");
+      if (event[0] != 0x02) {
+        _log.info("Received string: ${utf8.decode(event)}");
       }
-      return utf8.decode(event.value);
+      return utf8.decode(event);
     });
   }
 
   Stream<List<int>> get dataResponse {
-    return FlutterBluePlus.events.onCharacteristicReceived
-        .where((event) => event.value[0] == 0x01)
+    // changed to only listen for data coming through the Frame's rx characteristic, not all attached devices as before
+    return _rxChannel!.onValueReceived
+        .where((event) => event[0] == 0x01)
         .map((event) {
-      _log.fine("Received data: ${event.value.sublist(1)}");
-      return event.value.sublist(1);
+      _log.fine("Received data: ${event.sublist(1)}");
+      return event.sublist(1);
     });
   }
 
@@ -145,7 +149,7 @@ class BrilliantDevice {
       }
 
       final response = await _rxChannel!.onValueReceived
-          .timeout(const Duration(seconds: 1))
+          .timeout(const Duration(seconds: 10))
           .first;
 
       return utf8.decode(response);
