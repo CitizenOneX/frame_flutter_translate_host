@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:logging/logging.dart';
 import 'brilliant_bluetooth.dart';
 
@@ -11,6 +12,7 @@ enum ApplicationState {
   disconnected,
   scanning,
   connecting,
+  connected,
   ready,
   running,
   stopping,
@@ -20,16 +22,18 @@ enum ApplicationState {
 final _log = Logger("SFA");
 
 mixin SimpleFrameAppState<T extends StatefulWidget> on State<T> {
+  // Frame to Phone flags
+  static const batteryStatusFlag = 0x0c;
+
   ApplicationState currentState = ApplicationState.disconnected;
   int? _batt;
 
   // Use BrilliantBluetooth for communications with Frame
   BrilliantDevice? frame;
-  StreamSubscription? _scanStream;
+  StreamSubscription<BrilliantScannedDevice>? _scanStream;
   StreamSubscription<BrilliantDevice>? _deviceStateSubs;
   StreamSubscription<List<int>>? _rxAppData;
   StreamSubscription<String>? _rxStdOut;
-
 
   Future<void> scanForFrame() async {
     currentState = ApplicationState.scanning;
@@ -54,6 +58,7 @@ mixin SimpleFrameAppState<T extends StatefulWidget> on State<T> {
           case ApplicationState.connecting:
             // found a device and started connecting, just let it play out
             break;
+          case ApplicationState.connected:
           case ApplicationState.ready:
           case ApplicationState.running:
             // already connected, nothing to do
@@ -91,8 +96,8 @@ mixin SimpleFrameAppState<T extends StatefulWidget> on State<T> {
         await Future.delayed(const Duration(milliseconds: 500));
         await frame!.sendBreakSignal();
 
-        // Application is ready to go!
-        currentState = ApplicationState.ready;
+        // Frame is ready to go!
+        currentState = ApplicationState.connected;
         if (mounted) setState(() {});
 
       } catch (e) {
@@ -132,8 +137,8 @@ mixin SimpleFrameAppState<T extends StatefulWidget> on State<T> {
           await Future.delayed(const Duration(milliseconds: 500));
           await frame!.sendBreakSignal();
 
-          // Application is ready to go!
-          currentState = ApplicationState.ready;
+          // Frame is ready to go!
+          currentState = ApplicationState.connected;
           if (mounted) setState(() {});
 
         } catch (e) {
@@ -225,17 +230,14 @@ mixin SimpleFrameAppState<T extends StatefulWidget> on State<T> {
     _rxAppData?.cancel();
     _rxAppData = frame!.dataResponse.listen((data) {
       if (data.length > 1) {
-        // battery level message
-        if (data[0] == 0x0c) {
+        // at this stage simple frame app only handles battery level message 0x0c
+        // let any other application-specific message be handled by the app when
+        // they listen on dataResponse
+        if (data[0] == batteryStatusFlag) {
           _batt = data[1];
           if (mounted) setState(() {});
         }
-        else {
-          _log.severe('Unexpected AppData Message Type: ${data[0]}');
-        }
       }
-      // TODO also dispatch to the end-user's implementation of the dataResponse handler
-      // - either strip out the battery message and map the result like BrilliantBluetooth does, or just pass all data through
     });
 
     // subscribe one listener to the stdout stream
@@ -275,9 +277,44 @@ mixin SimpleFrameAppState<T extends StatefulWidget> on State<T> {
     return Row(children: [Text('$_batt%'), Icon(i, size: 16,)]);
   }
 
-  /// the SimpleFrameApp subclass provides the application-specific code
-  Future<void> runApplication();
+  /// the SimpleFrameApp subclass can override with application-specific code if necessary
+  Future<void> startApplication() async {
+    // try to get the Frame into a known state by making sure there's no main loop running
+    frame!.sendBreakSignal();
+    await Future.delayed(const Duration(milliseconds: 500));
 
-  /// the SimpleFrameApp subclass provides the application-specific code
-  Future<void> interruptApplication();
+    // only if there is a frame_app.lua companion app
+    // TODO could load minified frame_app if one exists?
+    bool hasFrameApp = (await AssetManifest.loadFromAssetBundle(rootBundle)).listAssets().contains('assets/frame_app.lua');
+    if (hasFrameApp) {
+      // send our frame_app to the Frame
+      await frame!.uploadScript('frame_app.lua', 'assets/frame_app.lua');
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // kick off the main application loop
+      await frame!.sendString('require("frame_app")', awaitResponse: true);
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+
+    currentState = ApplicationState.ready;
+    if (mounted) setState(() {});
+  }
+
+  /// the SimpleFrameApp subclass can override with application-specific code if necessary
+  Future<void> stopApplication() async {
+    // send a break to stop the Lua app loop on Frame
+    await frame!.sendBreakSignal();
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // only if there is a frame_app.lua companion app
+    bool hasFrameApp = (await AssetManifest.loadFromAssetBundle(rootBundle)).listAssets().contains('assets/frame_app.lua');
+    if (hasFrameApp) {
+      // clean up by deregistering any handler and deleting any prior script
+      await frame!.sendString('frame.bluetooth.receive_callback(nil);frame.file.remove("frame_app.lua");print(0)', awaitResponse: true);
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+
+    currentState = ApplicationState.connected;
+    if (mounted) setState(() {});
+  }
 }

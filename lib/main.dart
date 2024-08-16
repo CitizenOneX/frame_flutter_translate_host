@@ -119,8 +119,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   /// source language, convert to text, translate the text to the target language,
   /// and send the text to the Frame in real-time. It has a running main loop in this function
   /// and also on the Frame (frame_app.lua)
-  @override
-  Future<void> runApplication() async {
+  Future<void> run() async {
     currentState = ApplicationState.running;
     _text = '';
     _translatedText = '';
@@ -133,29 +132,6 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
         if (mounted) setState(() {});
         return;
       }
-
-      // try to get the Frame into a known state by making sure there's no main loop running
-      frame!.sendBreakSignal();
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // clean up by deregistering any handler and deleting any prior script
-      await frame!.sendString('frame.bluetooth.receive_callback(nil);print(0)', awaitResponse: true);
-      await Future.delayed(const Duration(milliseconds: 500));
-      await frame!.sendString('frame.file.remove("frame_app.lua");print(0)', awaitResponse: true);
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // send our frame_app to the Frame
-      // it listens to data being sent and renders the text on the display
-      await frame!.uploadScript('frame_app.lua', 'assets/frame_app.lua');
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // kick off the main application loop
-      await frame!.sendString('require("frame_app")', awaitResponse: true);
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // -----------------------------------------------------------------------
-      // frame_app is installed on Frame and running, start our application loop
-      // -----------------------------------------------------------------------
 
       String prevText = '';
 
@@ -191,7 +167,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
           // comes a bit soon and hence the display is cleared a little sooner
           // than they want (not like audio hangs around in the air though
           // after words are spoken!)
-          frame!.sendData([0x0b, 0x20]);
+          await frame!.sendData([0x0b, 0x20]);
           prevText = '';
           continue;
         }
@@ -242,19 +218,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
         prevText = _text;
       }
 
-      // ----------------------------------------------------------------------
-      // finished the main application loop, shut it down here and on the Frame
-      // ----------------------------------------------------------------------
-
       await stopAudio(audioRecorder!);
-
-      // send a break to stop the Lua app loop on Frame
-      await frame!.sendBreakSignal();
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // deregister the data handler
-      await frame!.sendString('frame.bluetooth.receive_callback(nil);print(0)', awaitResponse: true);
-      await Future.delayed(const Duration(milliseconds: 500));
 
     } catch (e) {
       _log.fine('Error executing application logic: $e');
@@ -264,12 +228,10 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     if (mounted) setState(() {});
   }
 
-  /// The runApplication function will keep running until we interrupt it here
-  /// and tell it to start shutting down. It will interrupt the frame_app
-  /// and perform the cleanup on Frame and here
-  @override
-  Future<void> interruptApplication() async {
-    currentState = ApplicationState.stopping;
+  /// The run()) function will keep running until we interrupt it here
+  /// and tell it to stop listening to audio
+  Future<void> cancel() async {
+    currentState = ApplicationState.ready;
     if (mounted) setState(() {});
   }
 
@@ -280,31 +242,36 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
     switch (currentState) {
       case ApplicationState.disconnected:
-        pfb.add(TextButton(onPressed: scanOrReconnectFrame, child: const Text('Connect Frame')));
+        pfb.add(TextButton(onPressed: scanOrReconnectFrame, child: const Text('Connect')));
         pfb.add(const TextButton(onPressed: null, child: Text('Start')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Finish')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Stop')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Disconnect')));
         break;
 
       case ApplicationState.initializing:
       case ApplicationState.scanning:
       case ApplicationState.connecting:
-      case ApplicationState.disconnecting:
+      case ApplicationState.running:
       case ApplicationState.stopping:
-        pfb.add(const TextButton(onPressed: null, child: Text('Connect Frame')));
+      case ApplicationState.disconnecting:
+        pfb.add(const TextButton(onPressed: null, child: Text('Connect')));
         pfb.add(const TextButton(onPressed: null, child: Text('Start')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Finish')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Stop')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Disconnect')));
+        break;
+
+      case ApplicationState.connected:
+        pfb.add(const TextButton(onPressed: null, child: Text('Connect')));
+        pfb.add(TextButton(onPressed: startApplication, child: const Text('Start')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Stop')));
+        pfb.add(TextButton(onPressed: disconnectFrame, child: const Text('Disconnect')));
         break;
 
       case ApplicationState.ready:
-        pfb.add(const TextButton(onPressed: null, child: Text('Connect Frame')));
-        pfb.add(TextButton(onPressed: runApplication, child: const Text('Start')));
-        pfb.add(TextButton(onPressed: disconnectFrame, child: const Text('Finish')));
-        break;
-
-      case ApplicationState.running:
-        pfb.add(const TextButton(onPressed: null, child: Text('Connect Frame')));
-        pfb.add(TextButton(onPressed: interruptApplication, child: const Text('Stop')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Finish')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Connect')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Start')));
+        pfb.add(TextButton(onPressed: stopApplication, child: const Text('Stop')));
+        pfb.add(const TextButton(onPressed: null, child: Text('Disconnect')));
         break;
     }
 
@@ -329,6 +296,11 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
             ),
           ),
         ),
+        floatingActionButton:
+          currentState == ApplicationState.ready ?
+            FloatingActionButton(onPressed: run, child: const Icon(Icons.mic)) :
+          currentState == ApplicationState.running ?
+          FloatingActionButton(onPressed: cancel, child: const Icon(Icons.mic_off)) : null,
         persistentFooterButtons: pfb,
       ),
     );
