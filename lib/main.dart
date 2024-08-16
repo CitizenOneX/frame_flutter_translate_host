@@ -27,7 +27,7 @@ class MainApp extends StatefulWidget {
 class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   MainAppState() {
-    Logger.root.level = Level.FINE;
+    Logger.root.level = Level.INFO;
     Logger.root.onRecord.listen((record) {
       debugPrint('${record.level.name}: [${record.loggerName}] ${record.time}: ${record.message}');
     });
@@ -119,6 +119,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   /// source language, convert to text, translate the text to the target language,
   /// and send the text to the Frame in real-time. It has a running main loop in this function
   /// and also on the Frame (frame_app.lua)
+  @override
   Future<void> run() async {
     currentState = ApplicationState.running;
     _text = '';
@@ -230,6 +231,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   /// The run()) function will keep running until we interrupt it here
   /// and tell it to stop listening to audio
+  @override
   Future<void> cancel() async {
     currentState = ApplicationState.ready;
     if (mounted) setState(() {});
@@ -237,44 +239,6 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   @override
   Widget build(BuildContext context) {
-    // work out the states of the footer buttons based on the app state
-    List<Widget> pfb = [];
-
-    switch (currentState) {
-      case ApplicationState.disconnected:
-        pfb.add(TextButton(onPressed: scanOrReconnectFrame, child: const Text('Connect')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Start')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Stop')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Disconnect')));
-        break;
-
-      case ApplicationState.initializing:
-      case ApplicationState.scanning:
-      case ApplicationState.connecting:
-      case ApplicationState.running:
-      case ApplicationState.stopping:
-      case ApplicationState.disconnecting:
-        pfb.add(const TextButton(onPressed: null, child: Text('Connect')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Start')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Stop')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Disconnect')));
-        break;
-
-      case ApplicationState.connected:
-        pfb.add(const TextButton(onPressed: null, child: Text('Connect')));
-        pfb.add(TextButton(onPressed: startApplication, child: const Text('Start')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Stop')));
-        pfb.add(TextButton(onPressed: disconnectFrame, child: const Text('Disconnect')));
-        break;
-
-      case ApplicationState.ready:
-        pfb.add(const TextButton(onPressed: null, child: Text('Connect')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Start')));
-        pfb.add(TextButton(onPressed: stopApplication, child: const Text('Stop')));
-        pfb.add(const TextButton(onPressed: null, child: Text('Disconnect')));
-        break;
-    }
-
     return MaterialApp(
       title: 'Translation',
       theme: ThemeData.dark(),
@@ -296,12 +260,8 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
             ),
           ),
         ),
-        floatingActionButton:
-          currentState == ApplicationState.ready ?
-            FloatingActionButton(onPressed: run, child: const Icon(Icons.mic)) :
-          currentState == ApplicationState.running ?
-          FloatingActionButton(onPressed: cancel, child: const Icon(Icons.mic_off)) : null,
-        persistentFooterButtons: pfb,
+        floatingActionButton: getFloatingActionButtonWidget(const Icon(Icons.mic), const Icon(Icons.mic_off)),
+        persistentFooterButtons: getFooterButtonsWidget(),
       ),
     );
   }
