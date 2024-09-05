@@ -84,6 +84,7 @@ class BrilliantDevice {
   }
 
   // logs each string message (messages without the 0x01 first byte) and provides a stream of the utf8-decoded strings
+  // Lua error strings come through here too, so logging at info
   Stream<String> get stringResponse {
     // changed to only listen for data coming through the Frame's rx characteristic, not all attached devices as before
     return _rxChannel!.onValueReceived
@@ -101,7 +102,7 @@ class BrilliantDevice {
     return _rxChannel!.onValueReceived
         .where((event) => event[0] == 0x01)
         .map((event) {
-      _log.fine("Received data: ${event.sublist(1)}");
+      _log.finest("Received data: ${event.sublist(1)}");
       return event.sublist(1);
     });
   }
@@ -162,8 +163,8 @@ class BrilliantDevice {
 
   Future<void> sendData(List<int> data) async {
     try {
-      _log.info("Sending ${data.length} bytes of plain data");
-      _log.fine(data);
+      _log.finer("Sending ${data.length} bytes of plain data");
+      _log.finest(data);
 
       if (state != BrilliantConnectionState.connected) {
         throw ("Device is not connected");
@@ -185,8 +186,8 @@ class BrilliantDevice {
   /// Same as sendData but user includes the 0x01 header byte to avoid extra memory allocation
   Future<void> sendDataRaw(List<int> data) async {
     try {
-      _log.info("Sending ${data.length-1} bytes of plain data");
-      _log.fine(data);
+      _log.finer("Sending ${data.length-1} bytes of plain data");
+      _log.finest(data);
 
       if (state != BrilliantConnectionState.connected) {
         throw ("Device is not connected");
@@ -201,7 +202,7 @@ class BrilliantDevice {
       }
 
       // TODO check throughput difference using withoutResponse: false
-      await _txChannel!.write(data, withoutResponse: true);
+      await _txChannel!.write(data, withoutResponse: false);
     } catch (error) {
       _log.warning("Couldn't send data. $error");
       return Future.error(BrilliantBluetoothException(error.toString()));
@@ -228,13 +229,16 @@ class BrilliantDevice {
     // instead point packetToSend to an UnmodifiableListView range within packetBuffer
     List<int> packetBuffer = List.filled(maxDataLength! + 1, 0x00);
     List<int> packetToSend = packetBuffer;
+    _log.fine('sendMessage: payload size: ${payload.length}');
 
     while (sentBytes < payload.length) {
       if (firstPacket) {
+        _log.finer('sendMessage: first packet');
         firstPacket = false;
 
         if (bytesRemaining < chunksize - 2) {
           // first and final chunk - small payload
+          _log.finer('sendMessage: first and final packet');
           packetBuffer[0] = 0x01;
           packetBuffer[1] = messageFlag & 0xFF;
           packetBuffer[2] = lengthMsb;
@@ -245,6 +249,7 @@ class BrilliantDevice {
         }
         else if (bytesRemaining == chunksize - 2) {
           // first and final chunk - small payload, exact packet size match
+          _log.finer('sendMessage: first and final packet, exact match');
           packetBuffer[0] = 0x01;
           packetBuffer[1] = messageFlag & 0xFF;
           packetBuffer[2] = lengthMsb;
@@ -255,6 +260,7 @@ class BrilliantDevice {
         }
         else {
           // first of many chunks
+          _log.finer('sendMessage: first of many packets');
           packetBuffer[0] = 0x01;
           packetBuffer[1] = messageFlag & 0xFF;
           packetBuffer[2] = lengthMsb;
@@ -267,6 +273,7 @@ class BrilliantDevice {
       else {
         // not the first packet
         if (bytesRemaining < chunksize) {
+          _log.finer('sendMessage: not the first packet, final packet');
           // final data chunk, smaller than chunksize
           packetBuffer[0] = 0x01;
           packetBuffer[1] = messageFlag & 0xFF;
@@ -275,6 +282,7 @@ class BrilliantDevice {
           packetToSend = UnmodifiableListView(packetBuffer.getRange(0, bytesRemaining + 2));
         }
         else  {
+          _log.finer('sendMessage: not the first packet, non-final packet or exact match final packet');
           // non-final data chunk or final chunk with exact packet size match
           packetBuffer[0] = 0x01;
           packetBuffer[1] = messageFlag & 0xFF;
@@ -286,8 +294,11 @@ class BrilliantDevice {
 
       // send the chunk
       await sendDataRaw(packetToSend);
+      // FIXME just seeing if a flow rate issue is causing Frame to miss packets
+      await Future.delayed(const Duration(milliseconds: 50));
 
       bytesRemaining = payload.length - sentBytes;
+      _log.finer('Bytes remaining: $bytesRemaining');
     }
   }
 
