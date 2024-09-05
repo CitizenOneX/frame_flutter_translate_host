@@ -298,6 +298,7 @@ class BrilliantDevice {
       String file = await rootBundle.loadString(filePath);
 
       file = file.replaceAll('\\', '\\\\');
+      file = file.replaceAll("\r\n", "\\n");
       file = file.replaceAll("\n", "\\n");
       file = file.replaceAll("'", "\\'");
       file = file.replaceAll('"', '\\"');
@@ -320,7 +321,7 @@ class BrilliantDevice {
         }
 
         // Don't split on an escape character
-        if (file[index + chunkSize - 1] == '\\') {
+        while (file[index + chunkSize - 1] == '\\') {
           chunkSize -= 1;
         }
 
