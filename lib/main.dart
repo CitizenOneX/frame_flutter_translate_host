@@ -8,7 +8,7 @@ import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 import 'package:logging/logging.dart';
 import 'package:record/record.dart';
 import 'package:vosk_flutter/vosk_flutter.dart';
-import 'package:simple_frame_app/frame_helper.dart';
+import 'package:simple_frame_app/text_utils.dart';
 import 'package:simple_frame_app/simple_frame_app.dart';
 
 void main() => runApp(const MainApp());
@@ -184,7 +184,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
         // on the other end in frame_app
         try {
           // send current text to Frame, splitting into "longText"-marked chunks if required
-          String wrappedText = FrameHelper.wrapText(_translatedText, 640, 4);
+          String wrappedText = TextUtils.wrapText(_translatedText, 640, 4);
 
           int sentBytes = 0;
           int bytesRemaining = wrappedText.length;
