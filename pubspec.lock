@@ -459,12 +459,11 @@ packages:
   simple_frame_app:
     dependency: "direct main"
     description:
-      path: "."
-      ref: HEAD
-      resolved-ref: f263843f7bc8573347ca36c6aec038399bbb5205
-      url: "https://github.com/CitizenOneX/simple_frame_app.git"
-    source: git
-    version: "0.0.1"
+      name: simple_frame_app
+      sha256: "24255fe45056d970bb8bcbe78746de79b9341b2cf01e8cfc9a8a5571338a8c4a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.7"
   sky_engine:
     dependency: transitive
     description: flutter

@@ -7,9 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 import 'package:logging/logging.dart';
 import 'package:record/record.dart';
-import 'package:vosk_flutter/vosk_flutter.dart';
-import 'package:simple_frame_app/text_utils.dart';
 import 'package:simple_frame_app/simple_frame_app.dart';
+import 'package:simple_frame_app/text_utils.dart';
+import 'package:simple_frame_app/tx/plain_text.dart';
+import 'package:vosk_flutter/vosk_flutter.dart';
 
 void main() => runApp(const MainApp());
 
@@ -167,7 +168,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
           // comes a bit soon and hence the display is cleared a little sooner
           // than they want (not like audio hangs around in the air though
           // after words are spoken!)
-          await frame!.sendData([0x0b, 0x20]);
+          await frame!.sendMessage(TxPlainText(msgCode: 0x0b, text: ' '));
           prevText = '';
           continue;
         }
@@ -179,39 +180,9 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
           _log.fine('Recognized text: $_text');
         }
 
-        // sentence fragments can be longer than MTU (200-ish bytes) so we introduce a header
-        // byte to indicate if this is a non-final chunk or a final chunk, which is interpreted
-        // on the other end in frame_app
-        try {
-          // send current text to Frame, splitting into "longText"-marked chunks if required
-          String wrappedText = TextUtils.wrapText(_translatedText, 640, 4);
-
-          int sentBytes = 0;
-          int bytesRemaining = wrappedText.length;
-          int chunksize = frame!.maxDataLength! - 1;
-          List<int> bytes;
-
-          while (sentBytes < wrappedText.length) {
-            if (bytesRemaining <= chunksize) {
-              // final chunk
-              bytes = [0x0b] + wrappedText.substring(sentBytes, sentBytes + bytesRemaining).codeUnits;
-            }
-            else {
-              // non-final chunk
-              bytes = [0x0a] + wrappedText.substring(sentBytes, sentBytes + chunksize).codeUnits;
-            }
-
-            // send the chunk
-            frame!.sendData(bytes);
-
-            sentBytes += bytes.length;
-            bytesRemaining = wrappedText.length - sentBytes;
-          }
-        }
-        catch (e) {
-          _log.severe('Error sending text to Frame: $e');
-          break;
-        }
+        // send current text to Frame
+        String wrappedText = TextUtils.wrapText(_translatedText, 640, 4);
+        await frame!.sendMessage(TxPlainText(msgCode: 0x0b, text: wrappedText));
 
         // update the phone UI too
         if (mounted) setState(() {});
