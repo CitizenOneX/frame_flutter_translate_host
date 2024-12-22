@@ -27,5 +27,5 @@ flutter:
     - packages/simple_frame_app/lua/battery.min.lua
     - packages/simple_frame_app/lua/data.min.lua
     - packages/simple_frame_app/lua/plain_text.min.lua
-    - assets/vosk-model-small-cn-0.22.zip
+    - assets/vosk-model-small-de-0.15.zip
     - assets/frame_app.min.lua
